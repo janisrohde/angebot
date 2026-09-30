@@ -165,23 +165,32 @@
   f.email.addEventListener('blur', function () { touched.email = true; update(); });
   f.tel.addEventListener('blur', function () { touched.tel = true; update(); });
 
-  // ---------- Erfolgston (kurzer, freundlicher Doppelton) ----------
+  // ---------- Erfolgston: heller, glockenartiger Doppel-Ding (selbst erzeugt, nichts wird geladen) ----------
   function playChime() {
     try {
       var AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return;
       var ctx = new AC();
-      [[880, 0], [1318.5, 0.12]].forEach(function (n) {
-        var o = ctx.createOscillator(), g = ctx.createGain();
-        o.type = 'sine'; o.frequency.value = n[0];
-        var t0 = ctx.currentTime + n[1];
-        g.gain.setValueAtTime(0.0001, t0);
-        g.gain.exponentialRampToValueAtTime(0.18, t0 + 0.02);
-        g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.45);
-        o.connect(g); g.connect(ctx.destination);
-        o.start(t0); o.stop(t0 + 0.5);
-      });
-      setTimeout(function () { ctx.close(); }, 1200);
+      var master = ctx.createGain();
+      master.gain.value = 0.22;
+      master.connect(ctx.destination);
+      // Glocke = Grundton + zwei leise Obertöne, sehr kurzer Anschlag, weiches Ausklingen
+      function ding(freq, start, len) {
+        [[1, 1], [2.01, 0.28], [3.02, 0.08]].forEach(function (h) {
+          var o = ctx.createOscillator(), g = ctx.createGain();
+          o.type = 'sine';
+          o.frequency.value = freq * h[0];
+          var t0 = ctx.currentTime + start;
+          g.gain.setValueAtTime(0.0001, t0);
+          g.gain.exponentialRampToValueAtTime(h[1], t0 + 0.006);
+          g.gain.exponentialRampToValueAtTime(0.0001, t0 + len / h[0]);
+          o.connect(g); g.connect(master);
+          o.start(t0); o.stop(t0 + len + 0.05);
+        });
+      }
+      ding(1174.66, 0, 0.55);    // D6
+      ding(1567.98, 0.1, 0.9);   // G6, klingt länger nach
+      setTimeout(function () { ctx.close(); }, 1500);
     } catch (e) { /* ohne Ton weiter */ }
   }
 
@@ -238,12 +247,41 @@
       });
   });
 
+  // ---------- Konfetti (reines CSS/JS, nichts wird geladen oder gespeichert) ----------
+  function confetti() {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    var colors = ['#1f8aa6', '#177a94', '#1c2536', '#f6c945', '#e76f51', '#2f855a', '#9b5de5'];
+    var box = document.createElement('div');
+    box.className = 'confetti';
+    box.setAttribute('aria-hidden', 'true');
+    for (var i = 0; i < 140; i++) {
+      var p = document.createElement('i');
+      p.style.setProperty('--x', (Math.random() * 100).toFixed(2) + 'vw');
+      p.style.setProperty('--drift', ((Math.random() - 0.5) * 30).toFixed(1) + 'vw');
+      p.style.setProperty('--rot', Math.round(360 + Math.random() * 720) + 'deg');
+      p.style.setProperty('--dur', (2.4 + Math.random() * 1.8).toFixed(2) + 's');
+      p.style.setProperty('--delay', (Math.random() * 0.6).toFixed(2) + 's');
+      p.style.setProperty('--c', colors[i % colors.length]);
+      p.style.setProperty('--w', (6 + Math.random() * 6).toFixed(0) + 'px');
+      if (i % 3 === 0) p.className = 'round';
+      box.appendChild(p);
+    }
+    document.body.appendChild(box);
+    setTimeout(function () { if (box.parentNode) box.parentNode.removeChild(box); }, 5200);
+  }
+
   function showSuccess(withSound) {
     sentCount++; lastSent = Date.now(); sentEmails[f.email.value.trim().toLowerCase()] = true;
+    f.send.classList.remove('is-sending');
+    f.send.textContent = 'Anfrage senden';
     form.hidden = true;
+    f.note.hidden = true;
+    f.error.hidden = true;
     f.ok.hidden = false;
     f.ok.classList.add('play');
-    f.ok.focus();
+    f.ok.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    f.ok.focus({ preventScroll: true });
+    confetti();
     if (withSound) playChime();
   }
 

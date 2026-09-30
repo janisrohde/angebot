@@ -741,3 +741,33 @@ header .question span { background: linear-gradient(transparent 55%, #bfe6f0 55%
   .product li strong { min-height: 3.4rem; align-items: flex-end; }
   .product li.arrow { margin-top: calc(3.4rem + .35rem + 85px - 1.3rem); }
 }
+
+/* Ausgeblendete Elemente wirklich ausblenden (auch wenn sie display: grid o. Ä. haben) */
+[hidden] { display: none !important; }
+
+/* Konfetti nach erfolgreicher Anfrage */
+.confetti {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 50;
+}
+.confetti i {
+  position: absolute;
+  top: -20px;
+  left: var(--x);
+  width: var(--w);
+  height: calc(var(--w) * 1.6);
+  background: var(--c);
+  border-radius: 2px;
+  opacity: 0;
+  animation: confetti-fall var(--dur) var(--delay) cubic-bezier(.25,.6,.4,1) forwards;
+}
+.confetti i.round { border-radius: 50%; height: var(--w); }
+@keyframes confetti-fall {
+  0%   { opacity: 1; transform: translate3d(0, 0, 0) rotate(0deg); }
+  85%  { opacity: 1; }
+  100% { opacity: 0; transform: translate3d(var(--drift), 105vh, 0) rotate(var(--rot)); }
+}
+
