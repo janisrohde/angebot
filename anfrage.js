@@ -31,6 +31,9 @@
   var COOLDOWN_MS = 60000;     // höchstens 1 Anfrage pro Minute
   var MAX_PER_VISIT = 3;       // höchstens 3 Anfragen pro Seitenaufruf
   var sentCount = 0, lastSent = 0, sentEmails = {};
+  var sending = false;          // läuft gerade ein Versand? (verhindert Doppelklick)
+  var WAIT_HINT_MS = 8000;      // danach Beruhigungstext
+  var TIMEOUT_MS = 30000;       // danach Abbruch
 
   // ---------- E-Mail prüfen ----------
   var EMAIL_RE = /^[A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]+@([A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,}$/;
@@ -137,7 +140,7 @@
     setHint(f.hTel, f.tel, touched.tel ? tel.msg : '', touched.tel && !tel.valid ? 'bad' : '');
 
     var ready = nameOk && em.valid && tel.valid && f.consent.checked;
-    f.send.disabled = !ready;
+    f.send.disabled = !ready || sending;
     var missing = [];
     if (!nameOk) missing.push('Nachname');
     if (!em.valid) missing.push(em.cls === 'wait' ? 'E-Mail wird geprüft' : 'gültige E-Mail-Adresse');
@@ -194,11 +197,38 @@
     } catch (e) { /* ohne Ton weiter */ }
   }
 
+  // ---------- Sende-Zustand: "Wird gesendet" mit drei hüpfenden Punkten ----------
+  var waitTimer = null;
+  function startSending() {
+    sending = true;
+    f.send.disabled = true;
+    f.send.classList.add('is-sending');
+    f.send.textContent = 'Wird gesendet';
+    var dots = document.createElement('span');
+    dots.className = 'dots';
+    dots.setAttribute('aria-hidden', 'true');
+    for (var i = 0; i < 3; i++) dots.appendChild(document.createElement('span'));
+    f.send.appendChild(dots);
+    document.getElementById('f-status').textContent = 'Anfrage wird gesendet';
+    f.note.hidden = true;
+    waitTimer = setTimeout(function () { document.getElementById('f-wait').hidden = false; }, WAIT_HINT_MS);
+  }
+  function stopSending() {
+    sending = false;
+    clearTimeout(waitTimer);
+    document.getElementById('f-wait').hidden = true;
+    document.getElementById('f-status').textContent = '';
+    f.note.hidden = false;
+    f.send.classList.remove('is-sending');
+    f.send.textContent = 'Anfrage senden';
+  }
+
   function showError(msg) { f.error.hidden = false; f.error.textContent = msg; }
 
   // ---------- Absenden ----------
   form.addEventListener('submit', function (e) {
     e.preventDefault();
+    if (sending) return; // schon unterwegs: kein zweites Absenden
     touched.nachname = touched.email = touched.tel = true;
     if (!update()) return;
     if (form.querySelector('[name="website"]').value) return; // Spam-Bot
@@ -210,9 +240,7 @@
     if (now - lastSent < COOLDOWN_MS) { showError('Bitte warten Sie einen Moment, bevor Sie erneut senden.'); return; }
 
     f.error.hidden = true;
-    f.send.disabled = true;
-    f.send.classList.add('is-sending');
-    f.send.textContent = 'Wird gesendet …';
+    startSending();
 
     var vorname = (document.getElementById('f-vorname').value || '').trim();
     var nachname = f.nachname.value.trim();
@@ -229,19 +257,24 @@
     body.append('website', form.querySelector('[name="website"]').value);
 
     function fail() {
-      f.send.classList.remove('is-sending');
-      f.send.textContent = 'Anfrage senden';
+      stopSending();
       update();
       showError('Das geht leider gerade nicht. Bitte rufen Sie uns an oder versuchen Sie es erneut.');
     }
 
-    fetch(WEBAPP_URL, { method: 'POST', body: body })
+    // Nach 30 Sekunden ohne Antwort abbrechen
+    var ctrl = ('AbortController' in window) ? new AbortController() : null;
+    var timeout = setTimeout(function () { if (ctrl) ctrl.abort(); }, TIMEOUT_MS);
+
+    fetch(WEBAPP_URL, { method: 'POST', body: body, signal: ctrl ? ctrl.signal : undefined })
       .then(function (r) { return r.json(); })
       .then(function (res) {
+        clearTimeout(timeout);
         if (res && res.ok === true) { showSuccess(true); }
         else { if (window.console) console.warn('Web-App:', res); fail(); }
       })
       .catch(function (err) {
+        clearTimeout(timeout);
         if (window.console) console.warn('Web-App nicht erreichbar:', err);
         fail();
       });
@@ -272,8 +305,7 @@
 
   function showSuccess(withSound) {
     sentCount++; lastSent = Date.now(); sentEmails[f.email.value.trim().toLowerCase()] = true;
-    f.send.classList.remove('is-sending');
-    f.send.textContent = 'Anfrage senden';
+    stopSending();
     form.hidden = true;
     f.note.hidden = true;
     f.error.hidden = true;
