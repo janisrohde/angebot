@@ -33,7 +33,9 @@
   var sentCount = 0, lastSent = 0, sentEmails = {};
   var sending = false;          // läuft gerade ein Versand? (verhindert Doppelklick)
   var WAIT_HINT_MS = 8000;      // danach Beruhigungstext
-  var TIMEOUT_MS = 30000;       // danach Abbruch
+  var ATTEMPT_TIMEOUT_MS = 25000; // pro Versuch; Google braucht beim ersten Aufruf manchmal 15 s
+  var RETRY_DELAYS_MS = [1500, 4000]; // automatische Wiederholungen (insgesamt 3 Versuche)
+  var pending = null;           // { body, id }: gleiche Anfrage behält bei Wiederholung dieselbe ID
 
   // ---------- E-Mail prüfen ----------
   var EMAIL_RE = /^[A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]+@([A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,}$/;
@@ -211,7 +213,13 @@
     f.send.appendChild(dots);
     document.getElementById('f-status').textContent = 'Anfrage wird gesendet';
     f.note.hidden = true;
+    document.getElementById('f-wait').textContent = 'Einen Moment noch, Ihre Anfrage wird übertragen …';
     waitTimer = setTimeout(function () { document.getElementById('f-wait').hidden = false; }, WAIT_HINT_MS);
+  }
+  function showWait(text) {
+    var w = document.getElementById('f-wait');
+    if (text) w.textContent = text;
+    w.hidden = false;
   }
   function stopSending() {
     sending = false;
@@ -223,25 +231,63 @@
     f.send.textContent = 'Anfrage senden';
   }
 
-  function showError(msg) { f.error.hidden = false; f.error.textContent = msg; }
+  // calm = ruhiger Hinweis (kein rotes Fehlerkästchen), z. B. bei Verbindungsproblemen
+  function showError(msg, calm) { f.error.hidden = false; f.error.textContent = msg; f.error.classList.toggle('is-calm', !!calm); }
 
   // ---------- Absenden ----------
-  form.addEventListener('submit', function (e) {
-    e.preventDefault();
-    if (sending) return; // schon unterwegs: kein zweites Absenden
-    touched.nachname = touched.email = touched.tel = true;
-    if (!update()) return;
-    if (form.querySelector('[name="website"]').value) return; // Spam-Bot
-    var now = Date.now();
-    var mail = f.email.value.trim().toLowerCase();
-    if (now - LOADED_AT < MIN_FILL_MS) return; // zu schnell ausgefüllt: sehr wahrscheinlich ein Bot
-    if (sentEmails[mail]) { showError('Diese Anfrage wurde bereits gesendet. Wir melden uns bei Ihnen.'); return; }
-    if (sentCount >= MAX_PER_VISIT) { showError('Sie haben bereits mehrere Anfragen gesendet. Bitte rufen Sie uns gern an.'); return; }
-    if (now - lastSent < COOLDOWN_MS) { showError('Bitte warten Sie einen Moment, bevor Sie erneut senden.'); return; }
+  // Eindeutige Nummer pro Anfrage: der Server erkennt Wiederholungen und speichert/mailt nur einmal
+  function newId() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    var a = new Uint8Array(16);
+    (window.crypto || window.msCrypto).getRandomValues(a);
+    return Array.prototype.map.call(a, function (x) { return ('0' + x.toString(16)).slice(-2); }).join('');
+  }
 
-    f.error.hidden = true;
-    startSending();
+  // Ein Versuch: Antwort wird als Text gelesen und selbst geprüft (kaputte Antworten = neuer Versuch)
+  function attempt(bodyStr) {
+    var ctrl = ('AbortController' in window) ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, ATTEMPT_TIMEOUT_MS);
+    return fetch(WEBAPP_URL, {
+      method: 'POST',
+      body: new URLSearchParams(bodyStr),
+      credentials: 'omit',      // ohne Google-Cookies: keine Probleme mit mehreren Konten
+      cache: 'no-store',
+      redirect: 'follow',
+      signal: ctrl ? ctrl.signal : undefined
+    })
+      .then(function (r) { return r.text(); })
+      .then(function (t) {
+        clearTimeout(timer);
+        var res = null;
+        try { res = JSON.parse(t); } catch (e) { /* keine gültige Antwort */ }
+        if (res && res.ok === true) return 'ok';
+        if (res && (res.error === 'invalid' || res.error === 'unknown_artist')) return 'invalid';
+        return 'retry';
+      }, function (err) {
+        clearTimeout(timer);
+        if (window.console) console.warn('Verbindung unterbrochen:', err && err.name);
+        return 'retry';
+      });
+  }
 
+  function sendWithRetries(bodyStr, n) {
+    return attempt(bodyStr).then(function (r) {
+      if (r !== 'retry' || n >= RETRY_DELAYS_MS.length) return r;
+      showWait('Die Verbindung ist langsam. Wir versuchen es automatisch noch einmal …');
+      return new Promise(function (res) { setTimeout(res, RETRY_DELAYS_MS[n]); })
+        .then(function () { return sendWithRetries(bodyStr, n + 1); });
+    });
+  }
+
+  // Letzte Chance, wenn alle Versuche keine Antwort bekamen: unbestätigt nachschicken.
+  // Wegen der gleichen ID entsteht dadurch nie eine doppelte Anfrage.
+  function beacon(bodyStr) {
+    try {
+      if (navigator.sendBeacon) navigator.sendBeacon(WEBAPP_URL, new URLSearchParams(bodyStr));
+    } catch (e) { /* egal */ }
+  }
+
+  function doSend() {
     var vorname = (document.getElementById('f-vorname').value || '').trim();
     var nachname = f.nachname.value.trim();
     var msg = (document.getElementById('f-msg').value || '').trim();
@@ -255,29 +301,49 @@
     body.append('email', f.email.value.trim());
     body.append('nachricht', text);
     body.append('website', form.querySelector('[name="website"]').value);
+    var core = body.toString();
 
-    function fail() {
+    // Gleicher Inhalt wie beim letzten, nicht bestätigten Versuch → gleiche ID wiederverwenden
+    if (!pending || pending.core !== core) pending = { core: core, id: newId() };
+    body.append('anfrage_id', pending.id);
+    var bodyStr = body.toString();
+
+    sendWithRetries(bodyStr, 0).then(function (r) {
+      if (r === 'ok') {
+        pending = null;
+        showSuccess(true);
+        return;
+      }
       stopSending();
       update();
-      showError('Das geht leider gerade nicht. Bitte rufen Sie uns an oder versuchen Sie es erneut.');
-    }
+      if (r === 'invalid') {
+        showError('Bitte prüfen Sie Ihre Angaben. Wenn es weiter nicht klappt, rufen Sie uns gern an: 0176 87305606.');
+      } else {
+        beacon(bodyStr);
+        showError('Die Verbindung ist gerade gestört. Ihre Anfrage ist vielleicht trotzdem angekommen. ' +
+          'Senden Sie sie gern noch einmal: Doppelte Anfragen erkennen wir automatisch. Oder rufen Sie uns an: 0176 87305606.', true);
+      }
+    });
+  }
 
-    // Nach 30 Sekunden ohne Antwort abbrechen
-    var ctrl = ('AbortController' in window) ? new AbortController() : null;
-    var timeout = setTimeout(function () { if (ctrl) ctrl.abort(); }, TIMEOUT_MS);
+  // ---------- Absenden ----------
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (sending) return; // schon unterwegs: kein zweites Absenden
+    touched.nachname = touched.email = touched.tel = true;
+    if (!update()) return;
+    if (form.querySelector('[name="website"]').value) return; // Spam-Bot
+    var now = Date.now();
+    var mail = f.email.value.trim().toLowerCase();
+    if (sentEmails[mail]) { showError('Diese Anfrage wurde bereits gesendet. Wir melden uns bei Ihnen.'); return; }
+    if (sentCount >= MAX_PER_VISIT) { showError('Sie haben bereits mehrere Anfragen gesendet. Bitte rufen Sie uns gern an.'); return; }
+    if (now - lastSent < COOLDOWN_MS) { showError('Bitte warten Sie einen Moment, bevor Sie erneut senden.'); return; }
 
-    fetch(WEBAPP_URL, { method: 'POST', body: body, signal: ctrl ? ctrl.signal : undefined })
-      .then(function (r) { return r.json(); })
-      .then(function (res) {
-        clearTimeout(timeout);
-        if (res && res.ok === true) { showSuccess(true); }
-        else { if (window.console) console.warn('Web-App:', res); fail(); }
-      })
-      .catch(function (err) {
-        clearTimeout(timeout);
-        if (window.console) console.warn('Web-App nicht erreichbar:', err);
-        fail();
-      });
+    f.error.hidden = true;
+    startSending();
+    // Sehr schnell ausgefüllt (z. B. Autovervollständigen)? Nicht ignorieren, sondern kurz warten.
+    var wait = Math.max(0, MIN_FILL_MS - (now - LOADED_AT));
+    setTimeout(doSend, wait);
   });
 
   // ---------- Konfetti (reines CSS/JS, nichts wird geladen oder gespeichert) ----------

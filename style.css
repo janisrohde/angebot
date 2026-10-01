@@ -785,3 +785,6 @@ header .question span { background: linear-gradient(transparent 55%, #bfe6f0 55%
   100% { opacity: 0; transform: translate3d(var(--drift), 105vh, 0) rotate(var(--rot)); }
 }
 
+/* Ruhiger Hinweis statt rotem Fehler (z. B. Verbindung gestört) */
+.form-error.is-calm { background: var(--light); border-color: var(--petrol); color: var(--navy); }
+
