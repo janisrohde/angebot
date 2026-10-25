@@ -788,3 +788,46 @@ header .question span { background: linear-gradient(transparent 55%, #bfe6f0 55%
 /* Ruhiger Hinweis statt rotem Fehler (z. B. Verbindung gestört) */
 .form-error.is-calm { background: var(--light); border-color: var(--petrol); color: var(--navy); }
 
+
+
+/* ---------- Selbst ändern (Bearbeiten-Modus) ---------- */
+.selbst-lead { color: var(--muted); max-width: 40rem; }
+.selbst {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: .6rem;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .9rem .6rem;
+  background: var(--light);
+  border-radius: var(--radius);
+}
+.selbst li { margin: 0; display: flex; flex-direction: column; gap: .45rem; }
+.selbst img {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1 / 2;
+  object-fit: cover;
+  object-position: top;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--white);
+}
+.selbst p { margin: 0; font-size: .95rem; line-height: 1.35; }
+.selbst-demo {
+  margin-top: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  background: var(--white);
+  display: grid;
+  gap: .8rem;
+}
+.selbst-demo p { margin: 0; }
+.selbst-demo .btn { width: 100%; }
+.selbst-hinweis { color: var(--muted); font-size: .95rem; margin-top: .8rem; }
+@media (min-width: 640px) {
+  .selbst { grid-template-columns: repeat(4, 1fr); padding: .9rem; gap: .9rem; }
+  .selbst-demo { grid-template-columns: 1fr auto; align-items: center; }
+  .selbst-demo .btn { width: auto; }
+}
