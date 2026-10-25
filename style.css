@@ -831,3 +831,21 @@ header .question span { background: linear-gradient(transparent 55%, #bfe6f0 55%
   .selbst-demo { grid-template-columns: 1fr auto; align-items: center; }
   .selbst-demo .btn { width: auto; }
 }
+
+/* Handy: Bilder als Wischleiste, damit die Seite kürzer bleibt */
+@media (max-width: 639px) {
+  .selbst {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: 46%;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    gap: .6rem;
+  }
+  .selbst li { scroll-snap-align: start; }
+  .selbst img { aspect-ratio: 9 / 14; }
+  .selbst p { font-size: .9rem; }
+}
+.selbst-wisch { color: var(--muted); font-size: .85rem; margin: .4rem 0 0; }
+@media (min-width: 640px) { .selbst-wisch { display: none; } }
